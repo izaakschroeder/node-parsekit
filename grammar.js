@@ -1,12 +1,18 @@
 
+var Parser = require('./parser');
 
-
+/**
+ *
+ *
+ *
+ */
 function Grammar(opts) {
 	this.productions = [ ];
 	this.tokens = { "$": true, "_epsilon": true  };
-	this.nonTerminals = { };
+	this.nonTerminals = { "_start": true };
 	this.firstSets = { };
 	this.internalStartSymbol = "_start";
+	this.productionMap = { }
 	
 	opts = opts || { };
 	
@@ -16,17 +22,60 @@ function Grammar(opts) {
 	for (var nonTerminal in opts.rules)
 		this.nonTerminal(nonTerminal);
 	
-	for (var nonTerminal in opts.rules)
-		for (var rightHandSide in opts.rules[nonTerminal])
-			this.production(nonTerminal, opts.rules[nonTerminal][rightHandSide]);
-	
+	for (var nonTerminal in opts.rules) {
+		if (Array.isArray(opts.rules[nonTerminal])) {
+			opts.rules[nonTerminal].forEach(function(rightHandSide) {
+				this.production(nonTerminal, rightHandSide);
+			})
+		} 
+		else if (typeof opts.rules[nonTerminal] === "object") {
+			for (var name in opts.rules[nonTerminal]) {
+				if (Array.isArray(opts.rules[nonTerminal][name])) {
+					var rightHandSide = opts.rules[nonTerminal][name];
+					this.production(nonTerminal, rightHandSide);
+				}
+				else if (typeof opts.rules[nonTerminal][name] === "object") {
+					var object = opts.rules[nonTerminal][name];
+					if (!object.rule)
+						throw "WTF?"
+					var production = this.production(nonTerminal, object.rule);
+					production.name = name;
+					this.productionMap[name] = production.id;
+					for (var property in object) {
+						if (property !== "rule")
+							production[property] = object[property];
+					}
+				}
+				else {
+					throw "WTF?";
+				}
+			}
+		}
+		else {
+			throw "WTF?"
+		}
+			
+	}
+		
 	this.setStartSymbol(opts.start);
+	this.generateFirstSets();	
+	this.generateStates();
+	this.generateTables();
+	
+	var d = require('./precedence');
+	var x = new d();
+	x.postProcess(this);
 	
 }
 
 Grammar.epsilon = "_epsilon";
 Grammar.endOfInput = "$";
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.firstSet = function(rhs) {
 	rhs = Array.isArray(rhs) ? rhs : [rhs];
 	
@@ -35,6 +84,7 @@ Grammar.prototype.firstSet = function(rhs) {
 	
 	var symbol = rhs[0];
 	var firstSet = this.firstSets[symbol];
+	
 
 	if (!(Grammar.epsilon in firstSet) || symbol == Grammar.epsilon)
 		return firstSet;
@@ -59,7 +109,11 @@ Grammar.prototype.firstSet = function(rhs) {
 	return nextFirstSet;
 }
 
-
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.generateFirstSets = function() {
 		
 	this.firstSets = { };
@@ -89,21 +143,22 @@ Grammar.prototype.generateFirstSets = function() {
 	} while(changed);
 }
 
-
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.itemSetClosure = function(state) {
 	var grammar = this;
 	var workQueue = state.slice();
 	var newItem;
-		
 	while (workQueue.length > 0) {
 		var item = workQueue.shift();
 		var dotPosition = item.dotPosition;
 		var rightHandSide = item.production.rightHandSide;
 				
 		if (dotPosition < rightHandSide.length && rightHandSide[dotPosition] in this.nonTerminals) {
-			
-			
-			
+
 			var nonTerminal = rightHandSide[dotPosition];
 			var tmp = rightHandSide.slice(dotPosition+1).concat(item.lookahead);
 						
@@ -114,29 +169,38 @@ Grammar.prototype.itemSetClosure = function(state) {
 				
 				var firstSet = grammar.firstSet(tmp);
 								
-				for (symbol in firstSet) {
-					if (newItem = state.push(new Item(production, 0, [ symbol ], false))) {
+				for (symbol in firstSet) 
+					if (newItem = state.push(new Item(production, 0, [ symbol ], false))) 
 						workQueue.push(newItem);
-					}
-				}
 			})			
 		}
 	}
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.setStartSymbol = function(symbol) {
 	if (!(symbol in this.nonTerminals))
 		throw "Start symbol must be a non-terminal!";
 	this.startSymbol = symbol;
+	this.startProduction = this.production(this.internalStartSymbol, this.startSymbol);
 	
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.generateStates = function() {
 	
 	
 	
 	this.initialState = new ItemSet();
-	this.initialState.push(new Item(this.production(this.internalStartSymbol, this.startSymbol), 0, [ Grammar.endOfInput ], true));
+	this.initialState.push(new Item(this.startProduction, 0, [ Grammar.endOfInput ], true));
 	
 	var 
 		toDoList = [ this.initialState ],
@@ -170,7 +234,7 @@ Grammar.prototype.generateStates = function() {
 				}
 			})
 
-			currentSet.complete = true;
+			currentSet.isComplete = true;
 			doneList.push(currentSet);
 		}
 		
@@ -196,14 +260,14 @@ Grammar.prototype.generateStates = function() {
 	
 					
 					if (!reduceReduceConflict) {
-						var addedItems = itemSet.merge(currentSet);
-												
+						var o = itemSet.length;
+						var addedItems = itemSet.merge(currentSet);						
 						comeFrom.forEach(function(item){
 							if ((item.action instanceof Shift) && (item.action.nextState == currentSet))
 								item.action.nextState = itemSet;
 						})
 						
-
+						
 						
 						if (itemSet.isComplete && addedItems.some(function(item){ return item.isShift(); })) {
 							itemSet.forEach(function(item) {
@@ -238,10 +302,13 @@ Grammar.prototype.generateStates = function() {
 	}
 	
 	this.states = doneList;
-	//for(var i = 0; i < this.states.length; ++i)
-	//	console.log(this.states[i].toString());
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.generateTables = function() {
 	actionTable = [ ];
 	gotoTable = [ ];
@@ -286,7 +353,10 @@ Grammar.prototype.generateTables = function() {
 				var lookahead;
 				
 				if (item.action.shiftSymbol in grammar.tokens) { //The shifted symbol is a token
-					addAction([ item.action.shiftSymbol ], { nextState: item.action.nextState.id })
+					addAction([ item.action.shiftSymbol ], { 
+						nextState: item.action.nextState.id, 
+						production: grammar.productions.indexOf(item.action.shiftItem.production) 
+					})
 				}
 				else if (item.action.shiftSymbol in grammar.nonTerminals) { //The shifted symbol is a non-terminal
 					var current = gotoTable[state.id][item.action.shiftSymbol];
@@ -300,7 +370,9 @@ Grammar.prototype.generateTables = function() {
 				}
 			}
 			else if (item.action instanceof Reduce) { //Reduce action
-				addAction(item.action.lookahead, { production: grammar.productions.indexOf(item.action.production) });
+				addAction(item.action.lookahead, { 
+					production: grammar.productions.indexOf(item.action.production) 
+				});
 			}
 			else { //Some other unknown action
 				//throw "Unknown action: "+item.action;
@@ -312,6 +384,11 @@ Grammar.prototype.generateTables = function() {
 	this.gotoTable = gotoTable;
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.removeEpsilonProductions = function() {
 	
 	var 
@@ -350,7 +427,7 @@ Grammar.prototype.removeEpsilonProductions = function() {
 			
 				
 			function addProduction() {
-				var newProduction = new Production(production.leftHandSide, production.rightHandSide.filter(function(item, i){ return !last[i]; }));
+				var newProduction = new Production(production.leftHandSide, production.rightHandSide.filter(function(item, i){ return !last[i]; }), production);
 				if (!(newProduction.key() in grammar.productions))
 					grammar.production(newProduction);
 			}	
@@ -378,14 +455,20 @@ Grammar.prototype.removeEpsilonProductions = function() {
 	} while (more); //4. If there are still epsilon productions, go back to step 1
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.isAmbiguous = function() {
-	return this.states.some(function(state) { 
-		return this.actionTable[state.id] && this.actionTable[state.id].some(function(actions) { 
-			return actions.length > 1;
-		});
-	});
+	this.actionTable.some(function(block){ return block.some(function(actions){ return actions.length > 1; }); });
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.build = function() {
 	this.removeEpsilonProductions();
 	this.generateFirstSets();
@@ -393,64 +476,132 @@ Grammar.prototype.build = function() {
 	this.generateTables();
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.token = function(id) {
 	this.tokens[id] = true;
+	return id;
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.nonTerminal = function(id) {
 	this.nonTerminals[id] = true;
+	return id;
 }
 
+/**
+ *
+ *
+ *
+ */
 Grammar.prototype.production = function() {
 	if (arguments.length === 1) {
-		var 
-			production = arguments[0],
-			key = production.key();
-			
-		if (this.productions[key])
-			throw "Duplication production!";
-		
-		this.productions[key] = true;
-		this.productions.push(production);
-		return production;
+		return this.production(arguments[0].leftHandSide, arguments[0].rightHandSide, arguments[0].parent);
 	}
 	else if (arguments.length > 1) {
 		var 
 			leftHandSide = arguments[0],
 			rightHandSide =  Array.isArray(arguments[1]) ? arguments[1] : Array.prototype.slice.call(arguments, 1),
-			production = new Production(leftHandSide, rightHandSide),
-			key = production.key();
+			parent = Array.isArray(arguments[1]) ? arguments[2] : undefined;
+			
+		if (!leftHandSide || rightHandSide.length === 0)
+			throw "Need both a left and right hand side!"
 		
-		if (this.productions[key])
-			throw "Duplication production!";
+		if (typeof rightHandSide[0] === "object") {
+			var out = [ ];
+			for(var i = 0; i<rightHandSide.length; ++i)
+				out.push(this.production(leftHandSide, rightHandSide[i], parent));
+			return out;
+		}
+		else {
+			var
+				production = new Production(leftHandSide, rightHandSide, parent),
+				key = production.key();
 		
-		this.productions[key] = true;
-		this.productions.push(production);
-		return production;
+			if (this.productions[key])
+				throw "Duplication production!";
+			
+			production.id = this.productions.length;	
+			
+			this.productions[key] = true;
+			this.productions.push(production);
+			
+			return production;
+		}		
 	}
 }
 
-function Production(leftHandSide, rightHandSide) {
+Grammar.prototype.context = function() {
+	return new Parser(this);
+}
+
+/**
+ *
+ *
+ *
+ */
+Grammar.create = function(opts) {
+	return new Grammar(opts);
+}
+
+/**
+ *
+ *
+ *
+ */
+function Production(leftHandSide, rightHandSide, parent) {
 	this.leftHandSide = leftHandSide;
 	this.rightHandSide = rightHandSide;
+	if (parent)
+		this.parent = parent;
 }
 
+/**
+ *
+ *
+ *
+ */
 Production.prototype.key = function() {
-	return this.leftHandSide+"->"+this.rightHandSide.join();
+	return this.leftHandSide+"->"+this.rightHandSide.join(",");
 }
 
+/**
+ *
+ *
+ *
+ */
 Production.prototype.toString = function() {
 	return this.leftHandSide+" -> "+this.rightHandSide.join(" ");
 }
 
+/**
+ *
+ *
+ *
+ */
 function ItemSet() {
 
 }
 
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype = [ ];
 
-
-
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.merge = function(itemSet) {
 	var self = this, added = [ ];
 	itemSet.forEach(function(item){
@@ -464,6 +615,11 @@ ItemSet.prototype.merge = function(itemSet) {
 	return added;
 }
 
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.push = function(item) {
 	var key = item.key();
 	if (this[key])
@@ -473,41 +629,81 @@ ItemSet.prototype.push = function(item) {
 	return item;
 }
 
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.containsCore = function(other) {
 	return this.some(function(item) { return item.hasIdenticalCoresWith(other); });
 }
-	
+
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.isWeaklyCompatibleWith = function(other) {
 	return this.every(function(item){ return !item.isKernel || other.containsCore(item); });
 }
-	
+
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.hasShiftingItem = function() {
 	return this.some(function(item) { return item.isShift(); });
 }
-	
+
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.hasReducingItem = function() {
 	return this.some(function(item) { return item.isReduction(); });
 }
 
+/**
+ *
+ *
+ *
+ */
 ItemSet.prototype.toString = function() {
 	var out = "";
 	for (var i = 0; i < this.length; ++i)
 		out += "\n\t" + this[i].toString();
-	return (this.id ? "#"+this.id+ " " : "")+"[" + out + "\n]";
+	return (this.id >= 0 ? "#"+this.id+ " " : "")+"[" + out + "\n]";
 }
 
+/**
+ *
+ *
+ *
+ */
 function Shift(shiftSymbol, shiftItem, nextState) {
 	this.shiftSymbol = shiftSymbol;
 	this.nextState = nextState;
 	this.shiftItem = shiftItem;
 }
 
+/**
+ *
+ *
+ *
+ */
 function Reduce(production, lookahead) {
 	this.production = production;
 	this.lookahead = lookahead;
 }
 
 
+/**
+ *
+ *
+ *
+ */
 function Item(production, dotPosition, lookahead, isKernel, action) {
 	this.production = production;
 	this.dotPosition = dotPosition;
@@ -516,18 +712,38 @@ function Item(production, dotPosition, lookahead, isKernel, action) {
 	this.action = action;
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.key = function() {
 	return this.production.key()+"/"+this.dotPosition+"/"+this.lookahead.join();
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.isReduction = function() {
 	return !this.isShift();
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.isShift = function() {
 	return this.dotPosition < this.production.rightHandSide.length;
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.hasReductionConflictWith = function(item) {
 	if (!this.isReduction() || !item.isReduction())
 		return false;
@@ -549,14 +765,29 @@ Item.prototype.hasReductionConflictWith = function(item) {
 		this.dotPosition == item.dotPosition;
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.hasIdenticalCoresWith = function(item) {
 	return this.production.key() === item.production.key() && this.dotPosition === item.dotPosition;
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.getMarkedSymbol = function() {
 	return this.production.rightHandSide[this.dotPosition];
 }
 
+/**
+ *
+ *
+ *
+ */
 Item.prototype.toString = function() {
 	var beforeDot = this.production.rightHandSide.slice(0, this.dotPosition).join(" ");
 	var afterDot =  this.production.rightHandSide.slice(this.dotPosition).join(" ");
@@ -564,11 +795,4 @@ Item.prototype.toString = function() {
 
 }
 
-exports.create = function(opts) {
-	return new Grammar(opts);
-}
-
-exports.epsilon = Grammar.epsilon;
-
-
-
+module.exports = Grammar;

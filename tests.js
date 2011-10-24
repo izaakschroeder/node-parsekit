@@ -1,6 +1,6 @@
 
 var 
-	assert = require('assert'),
+	assert = require('assert'), util = require('util'),
 	Grammar = require('./grammar'),
 	Parser = require('./parser');
 
@@ -100,6 +100,18 @@ function derp() {
 	
 	var parser = Parser.create(grammar);
 	
+	parser.on("shift", function(token) {
+		console.log("Shifted "+token);
+	});
+	
+	parser.on("reduce", function(rightHandSide, production) {
+		console.log("Reduced to "+production.leftHandSide+"; ("+rightHandSide+")");
+	});
+	
+	Tree.build(parser, function(tree) {
+		console.log("Got parse tree: "+util.inspect(tree, false, null));
+	})
+	
 	function parse(string) {
 		parser.reset();
 		string.split(" ").forEach(function(token){ parser.feed(token); });
@@ -114,6 +126,7 @@ function derp() {
 		assert.ok(false);
 	} catch (e) {
 		assert.ok(true);
+		console.log("Expected any of: "+parser.expects());
 	}
 	
 }

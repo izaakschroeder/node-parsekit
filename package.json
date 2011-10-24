@@ -4,5 +4,5 @@
 	"description": "A complete context-free parsing system.",
 	"author": "Izaak Schroeder",
 	"engine": "node >= 0.4.10",
-	"main": "parser.js"
+	"main": "exports.js"
 }

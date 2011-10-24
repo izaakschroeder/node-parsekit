@@ -1,3 +1,26 @@
 = ParseKit =
 
 This package contains a complete parsing system for node.js.
+
+== Query Selector ==
+
+ParseKit supports a CSS-like syntax for selecting nodes from the abstract syntax
+trees that it generates.
+
+|=Selector |=Result|
+|id|All elements whose symbol is equal to "id".|
+|.id|All non-terminals whose production is equal to "id".|
+|/regex/|All tokens whose value matches the given regular expression.|
+|"string"|All tokens whose value matches the given string.|
+|a b|Any descendants of "a" which match the selector "b".|
+|a > b|Any immediate children of "a" which match the selector "b".|
+|a ^ b|Any ancestors of "a" which match the selector "b".|
+|a < b|Any immediate parents of "a" which match the selector "b".|
+|a + b|Any immediate next siblings of "a" which match the selector "b".|
+|a - b|Any immediate previous siblings of "a" which match the selector "b".|
+|a +* b|Any next siblings of "a" which match the selector "b".|
+|a -* b|Any previous siblings of "a" which match the selector "b".|
+|a ~ b|Any siblings of "a" which match the selector "b".|
+|a, b|Nodes matched by either "a" or "b".|
+|*|Everything.|
+|a ( b )|Any nodes of "a" whose result of applying "b" is a non-empty set.|
